@@ -34,6 +34,7 @@ import { resolveConfigPath, resolveIncludeRoots, resolveStateDir } from "./paths
 import { createConfigResolutionFacts, type ConfigResolutionFacts } from "./resolution-facts.js";
 import { getRuntimeConfigSourceSnapshot } from "./runtime-snapshot.js";
 import type { OpenClawConfig } from "./types.js";
+export { rejectConfigNonFiniteNumbers } from "./value-tree.js";
 
 export function hashConfigRaw(raw: string | null): string {
   // Present-file hashes stay compatible with last-known-good recovery metadata.
