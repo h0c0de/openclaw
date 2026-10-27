@@ -25,7 +25,7 @@ import { dispatchRoutedChannelTurn } from "./lifecycle.js";
 import type { ChannelTurnDeliveryAdapter } from "./types.js";
 
 const dispatchCore = vi.hoisted(() => vi.fn());
-const sendRecoveryNotice = vi.hoisted(() => vi.fn());
+const sendNotice = vi.hoisted(() => vi.fn());
 const appendAssistantMessageToSessionTranscript = vi.hoisted(() => vi.fn());
 const resolveDurableSupport = vi.hoisted(() => vi.fn());
 
@@ -37,8 +37,8 @@ vi.mock("../session.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../session.js")>()),
   recordInboundSession: vi.fn(async () => undefined),
 }));
-vi.mock("../../gateway/server-recovery-runtime-context.js", () => ({
-  getGatewayRecoveryRuntime: () => ({ sendRecoveryNotice }),
+vi.mock("../../gateway/server-lifecycle-runtime-context.js", () => ({
+  getGatewayLifecycleRuntime: () => ({ sendNotice }),
 }));
 vi.mock("../../infra/outbound/deliver.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../infra/outbound/deliver.js")>()),
@@ -86,7 +86,7 @@ describe("pending delivery notice end to end", () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    sendRecoveryNotice.mockResolvedValue({ suppressed: false });
+    sendNotice.mockResolvedValue({ suppressed: false });
     appendAssistantMessageToSessionTranscript.mockResolvedValue({ ok: true });
     storePath = path.join(sessionDirs.make(), "sessions.json");
     const fixture = createPendingFinalFixture(storePath, "delivery-e2e", sessionKey, {
@@ -143,7 +143,7 @@ describe("pending delivery notice end to end", () => {
     await sending.promise;
     try {
       await freshTurn();
-      expect(sendRecoveryNotice).not.toHaveBeenCalled();
+      expect(sendNotice).not.toHaveBeenCalled();
       expect(appendAssistantMessageToSessionTranscript).not.toHaveBeenCalled();
       expect(entry()?.pendingDeliveryNotice?.state).toBe("owed");
 
@@ -152,13 +152,13 @@ describe("pending delivery notice end to end", () => {
       await runTurn(duplicate);
       expect(duplicate).not.toHaveBeenCalled();
       await freshTurn();
-      expect(sendRecoveryNotice).not.toHaveBeenCalled();
+      expect(sendNotice).not.toHaveBeenCalled();
     } finally {
       finish.resolve();
       await attempt;
     }
     await freshTurn();
-    expect(sendRecoveryNotice).not.toHaveBeenCalled();
+    expect(sendNotice).not.toHaveBeenCalled();
     expect(entry()?.pendingDeliveryNotice).toBeUndefined();
   });
 
@@ -194,7 +194,7 @@ describe("pending delivery notice end to end", () => {
       });
     }
     expect(platformSend).not.toHaveBeenCalled();
-    expect(sendRecoveryNotice).toHaveBeenCalledOnce();
+    expect(sendNotice).toHaveBeenCalledOnce();
   });
 
   it.each([
@@ -232,11 +232,11 @@ describe("pending delivery notice end to end", () => {
     expect(onError).toHaveBeenCalledExactlyOnceWith(error, { kind: "final" });
 
     await freshTurn();
-    expect(sendRecoveryNotice).not.toHaveBeenCalled();
+    expect(sendNotice).not.toHaveBeenCalled();
   });
 
   it.each([false, true])("settles suppression=%s once", async (suppressed) => {
-    sendRecoveryNotice.mockResolvedValue({ suppressed });
+    sendNotice.mockResolvedValue({ suppressed });
     const ambiguous = new Error("socket closed before response");
     await expect(runTurn(() => Promise.reject(ambiguous))).rejects.toBe(ambiguous);
 
@@ -244,10 +244,10 @@ describe("pending delivery notice end to end", () => {
       pendingFinalDelivery: { deliveries: [{ id: completion.deliveryId, state: "unknown" }] },
       pendingDeliveryNotice: { intentId: completion.intentId, state: "owed" },
     });
-    expect(sendRecoveryNotice).not.toHaveBeenCalled();
+    expect(sendNotice).not.toHaveBeenCalled();
 
     await freshTurn();
-    expect(sendRecoveryNotice).toHaveBeenCalledExactlyOnceWith(
+    expect(sendNotice).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         ...context,
         text: expect.stringContaining("couldn’t confirm"),
@@ -263,7 +263,7 @@ describe("pending delivery notice end to end", () => {
     // A queue restart can repeat owner settlement after its first write committed.
     await settleDurableDelivery(completion, { platformSendStarted: true });
     await freshTurn();
-    expect(sendRecoveryNotice).toHaveBeenCalledTimes(1);
+    expect(sendNotice).toHaveBeenCalledTimes(1);
     expectNoticeState(suppressed);
   });
 });

@@ -1,7 +1,7 @@
 import { updateSessionEntry } from "../../config/sessions/session-accessor.js";
 import { withSessionEntriesFromStoresInWorker } from "../../config/sessions/session-entry-read-runtime.js";
 import { appendAssistantMessageToSessionTranscript } from "../../config/sessions/transcript.js";
-import { getGatewayRecoveryRuntime } from "../../gateway/server-recovery-runtime-context.js";
+import { getGatewayLifecycleRuntime } from "../../gateway/server-lifecycle-runtime-context.js";
 import { findDeliveryIntentOwner } from "../../infra/outbound/delivery-queue-storage.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { deliveryContextFromSession } from "../../utils/delivery-context.read.js";
@@ -31,7 +31,7 @@ export async function deliverPendingDeliveryNotice(
       const entry = read?.result.entries[0]?.entry;
       const notice = entry?.pendingDeliveryNotice;
       const context = normalizeDeliveryContext(notice?.context);
-      const runtime = getGatewayRecoveryRuntime();
+      const runtime = getGatewayLifecycleRuntime();
       if (
         !entry ||
         !runtime ||
@@ -48,7 +48,7 @@ export async function deliverPendingDeliveryNotice(
       read?.assertCurrent();
       const idempotencyKey = `main-session-restart-recovery:pending-final:${notice.intentId}`;
       const delivery = runtime
-        .sendRecoveryNotice({
+        .sendNotice({
           channel: context.channel,
           to: context.to,
           accountId: context.accountId,

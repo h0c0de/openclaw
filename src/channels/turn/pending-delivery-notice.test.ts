@@ -8,12 +8,12 @@ import { deliverPendingDeliveryNotice } from "./pending-delivery-notice.js";
 const PENDING_DELIVERY_NOTICE =
   "I couldn’t confirm whether my previous reply reached this chat, so I won’t resend it automatically. Please ask for any missing remainder.";
 
-const sendRecoveryNotice = vi.hoisted(() => vi.fn());
+const sendNotice = vi.hoisted(() => vi.fn());
 const appendAssistantMessageToSessionTranscript = vi.hoisted(() => vi.fn());
 const findDeliveryIntentOwner = vi.hoisted(() => vi.fn());
 
-vi.mock("../../gateway/server-recovery-runtime-context.js", () => ({
-  getGatewayRecoveryRuntime: () => ({ sendRecoveryNotice }),
+vi.mock("../../gateway/server-lifecycle-runtime-context.js", () => ({
+  getGatewayLifecycleRuntime: () => ({ sendNotice }),
 }));
 vi.mock("../../config/sessions/transcript.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../config/sessions/transcript.js")>()),
@@ -37,7 +37,7 @@ const expectNotice = (state: string) =>
 function pendingNotice() {
   const started = createDeferred();
   const result = createDeferred<{ suppressed: boolean }>();
-  sendRecoveryNotice.mockImplementationOnce(() => {
+  sendNotice.mockImplementationOnce(() => {
     started.resolve();
     return result.promise;
   });
@@ -46,7 +46,7 @@ function pendingNotice() {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  sendRecoveryNotice.mockReset().mockResolvedValue({ suppressed: false });
+  sendNotice.mockReset().mockResolvedValue({ suppressed: false });
   findDeliveryIntentOwner.mockReturnValue(null);
   appendAssistantMessageToSessionTranscript.mockResolvedValue({ ok: true });
   storePath = path.join(sessionDirs.make(), "sessions.json");
@@ -67,7 +67,7 @@ it("does not cross an account or thread route", async () => {
     delivery: { ...current.delivery, context: { ...context, accountId: "other" } },
   });
   await deliver();
-  expect(sendRecoveryNotice).not.toHaveBeenCalled();
+  expect(sendNotice).not.toHaveBeenCalled();
   expectNotice("owed");
 });
 
@@ -76,11 +76,11 @@ it.each([
   ["completed", "acknowledged"],
   ["pending", "owed"],
 ])("preserves %s durable notice status after a send error", async (status, state) => {
-  sendRecoveryNotice.mockRejectedValue(new Error("notice send failed"));
+  sendNotice.mockRejectedValue(new Error("notice send failed"));
   findDeliveryIntentOwner.mockReturnValue({ status });
   await deliver();
   if (status === "completed") {
-    expect(sendRecoveryNotice).toHaveBeenCalledWith({
+    expect(sendNotice).toHaveBeenCalledWith({
       ...context,
       text: PENDING_DELIVERY_NOTICE,
       idempotencyKey: "main-session-restart-recovery:pending-final:intent-1",
