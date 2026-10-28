@@ -270,7 +270,7 @@ describe("Anthropic immutable request bytes", () => {
         return response;
       },
     });
-    const stream = createAnthropicMessagesTransportStreamFn()(
+    const stream = await createAnthropicMessagesTransportStreamFn()(
       model,
       { ...context, messages },
       {

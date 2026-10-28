@@ -144,7 +144,7 @@ export function serializeAnthropicRequestBody(
     return JSON.stringify(payload);
   }
   const messages = messageSources ?? payload.messages;
-  const parts: BlobPart[] = [];
+  const parts: Array<string | Blob> = [];
   let envelope = "{";
   let separator = "";
   for (const key of Object.keys(payload)) {
