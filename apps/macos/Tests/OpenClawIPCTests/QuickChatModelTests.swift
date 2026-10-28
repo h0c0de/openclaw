@@ -458,34 +458,84 @@ struct QuickChatModelTests {
             agentID: nil))
     }
 
-    @Test func `edits during a screenshot send survive and keep their draft`() async throws {
+    @Test(.testWaitLimit, arguments: ["accepted", "startup", "replaced-gateway"])
+    func `pending screenshot keeps its payload and draft without crossing gateway replacement`(
+        scenario: String) async throws
+    {
         let latch = SendLatch()
-        var receivedMessage: String?
-        let model = self.makeModel(sendHandler: { _, _, message, _, _, _ in
-            receivedMessage = message
-            return try await latch.wait()
+        let source = try GatewayConnectionEndpointSource(url: #require(URL(string: "ws://quickchat-test.invalid")))
+        var sends: [Data] = []
+        let recordSend: @MainActor @Sendable (Data) -> Int = { params in
+            sends.append(params)
+            return sends.count
+        }
+        let sockets = GatewayTestWebSocketSession(taskFactory: {
+            GatewayTestWebSocketTask(sendHook: { socket, message, index in
+                guard index > 0 else { return }
+                let data: Data = switch message {
+                case let .data(value): value
+                case let .string(value): Data(value.utf8)
+                @unknown default: Data()
+                }
+                let frame = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                try #require(frame["method"] as? String == "chat.send")
+                let params = try #require(frame["params"] as? [String: Any])
+                let attempt = try await recordSend(JSONSerialization.data(withJSONObject: params, options: .sortedKeys))
+                var response: [String: Any] = try [
+                    "type": "res", "id": #require(frame["id"] as? String), "ok": true,
+                    "payload": ["runId": #require(params["idempotencyKey"] as? String), "status": "started"],
+                ]
+                if attempt == 1 {
+                    _ = try await latch.wait()
+                    if scenario != "accepted" {
+                        response["ok"] = false
+                        response["error"] = [
+                            "code": "UNAVAILABLE", "message": "Agent is preparing", "retryable": true,
+                            "retryAfterMs": 1,
+                            "details": ["reason": "startup-sidecars", "method": "chat.send"],
+                        ]
+                    }
+                }
+                try socket.emitReceiveSuccess(.data(JSONSerialization.data(withJSONObject: response)))
+            })
         })
+        let gateway = GatewayConnection(
+            configProvider: { source.snapshot().config },
+            sessionBox: WebSocketSessionBox(session: sockets))
+        let model = self.makeModel(sendHandler: QuickChatModel.gatewaySendProvider(gateway: gateway))
         await self.prepare(model)
-        let png =
-            try #require(
-                Data(
-                    base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAA" +
-                        "C0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
+        let png = try #require(Data(
+            base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAA" +
+                "C0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="))
         let pipelineID = try #require(model.beginCapturePipeline())
         let send = Task { await model.sendCapturedImage(
-            pipelineID: pipelineID,
-            data: png,
-            label: "Safari — Docs",
-            fileName: "window-safari.jpg") }
+            pipelineID: pipelineID, data: png, label: "Synthetic window", fileName: "window.jpg") }
+        defer {
+            model.cancelAllTasks()
+            latch.finish(with: "started")
+        }
         while !latch.started {
+            try Task.checkCancellation()
             await Task.yield()
         }
-        // The screenshot send is suspended in flight; edits made now must survive it.
         model.text = "typed while sending"
+        #expect(model.sendState == .sending)
+        if scenario == "replaced-gateway" {
+            try source.setURL(#require(URL(string: "ws://replacement-test.invalid")))
+        }
         latch.finish(with: "started")
+        let accepted = await send.value
+        await gateway.shutdown()
 
-        #expect(await send.value)
-        #expect(receivedMessage == "Screenshot: Safari — Docs")
+        #expect(accepted == (scenario != "replaced-gateway"))
+        try #require(sends.count == (scenario == "startup" ? 2 : 1))
+        let first = try #require(JSONSerialization.jsonObject(with: sends[0]) as? [String: Any])
+        #expect(first["message"] as? String == "Screenshot: Synthetic window")
+        #expect(first["sessionKey"] as? String == "agent:main:main")
+        #expect((first["attachments"] as? [[String: Any]])?.count == 1)
+        if accepted { #expect(model.lastAcceptedIdempotencyKey == first["idempotencyKey"] as? String) }
+        if scenario == "startup" { #expect(sends[0] == sends[1]) }
+        #expect(sockets.snapshotMakeCount() == 1)
         #expect(model.text == "typed while sending")
         #expect(model.sendState == .idle)
     }

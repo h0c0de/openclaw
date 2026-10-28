@@ -279,16 +279,7 @@ final class QuickChatModel {
                 emoji: emoji,
                 avatar: QuickChatAgentDisplay.avatar(fromRendered: identity.avatar))
         },
-        sendProvider: @escaping SendProvider = { sessionKey, agentID, message, thinking, idempotencyKey, attachments in
-            let response = try await GatewayConnection.shared.chatSend(
-                sessionKey: sessionKey,
-                agentID: agentID,
-                message: message,
-                thinking: thinking,
-                idempotencyKey: idempotencyKey,
-                attachments: attachments)
-            return response.status
-        },
+        sendProvider: @escaping SendProvider = QuickChatModel.gatewaySendProvider(gateway: .shared),
         permissionStatusProvider: @escaping PermissionStatusProvider = { capabilities in
             await PermissionManager.grantedStatus(capabilities)
         },
@@ -839,6 +830,23 @@ final class QuickChatModel {
     private func setRoutingTarget(_ target: OpenClawChatSessionTarget?) {
         self.sessionKey = target?.sessionKey ?? ""
         self.sendAgentID = target?.agentID
+    }
+
+    static func gatewaySendProvider(gateway: GatewayConnection) -> SendProvider {
+        { sessionKey, agentID, message, thinking, idempotencyKey, attachments in
+            let route = try await gateway.captureRequiredRoute()
+            let response = try await withGatewayStartupAdmission(method: "chat.send") {
+                try await gateway.chatSend(
+                    sessionKey: sessionKey,
+                    agentID: agentID,
+                    message: message,
+                    thinking: thinking,
+                    idempotencyKey: idempotencyKey,
+                    attachments: attachments,
+                    ifCurrentRoute: route)
+            }
+            return response.status
+        }
     }
 
     private func performSend(

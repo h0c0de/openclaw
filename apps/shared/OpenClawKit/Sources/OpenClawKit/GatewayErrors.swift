@@ -254,7 +254,7 @@ public struct GatewayResponseError: LocalizedError, @unchecked Sendable {
     }
 }
 
-/// Voice owns the pending turn until admission or cancellation. Each RPC keeps
+/// The caller owns the pending turn until admission or cancellation. Each RPC keeps
 /// its ordinary deadline; only a method-bound startup refusal permits another attempt.
 public func withGatewayStartupAdmission<T>(
     method: String,
