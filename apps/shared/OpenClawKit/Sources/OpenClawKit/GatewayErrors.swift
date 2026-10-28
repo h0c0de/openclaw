@@ -258,7 +258,7 @@ public struct GatewayResponseError: LocalizedError, @unchecked Sendable {
 /// its ordinary deadline; only a method-bound startup refusal permits another attempt.
 public func withGatewayStartupAdmission<T>(
     method: String,
-    isolation: isolated (any Actor)? = #isolation,
+    isolation _: isolated (any Actor)? = #isolation,
     operation: () async throws -> T) async throws -> T
 {
     while true {
