@@ -2262,9 +2262,15 @@ struct ChatViewModelOutboxTests {
             if switchSession { vm.switchSession(to: "other") }
             vm.input = "keep the newer draft"
         }
+        if switchSession {
+            await vm.bootstrapTask?.value
+            try await waitForOutboxState { vm.hasRestoredOutboxMessages }
+            try #require(await MainActor.run { vm.healthOK })
+        }
         await sendGate.release()
         await send?.value
         #expect(await MainActor.run { vm.input } == "keep the newer draft")
+        try #require(await MainActor.run { !vm.healthOK })
         let queued = try #require(await store.loadCommands().first)
         #expect(queued.status == .queued)
         #expect(queued.text == "retain the first draft")
@@ -2278,15 +2284,14 @@ struct ChatViewModelOutboxTests {
             $0.sendStartupRejections = false
             $0.sendGate = retryGate
         }
-        if switchSession { await MainActor.run { vm.switchSession(to: "main") } }
         await transport.goOnline()
         try await finishOutboxFlush(vm, at: retryGate)
         #expect(await transport.state.sentIdempotencyKeys == [queued.id])
         #expect(await transport.state.sentMessages == ["retain the first draft"])
         #expect(await transport.state.sentThinkingLevels == [queued.thinking])
-        #expect(await userTexts(vm) == ["retain the first draft"])
+        #expect(await userTexts(vm) == (switchSession ? [] : ["retain the first draft"]))
         #expect(await store.loadCommands().isEmpty)
-        if switchSession { await MainActor.run { vm.switchSession(to: "other") } }
+        #expect(await MainActor.run { vm.sessionKey } == (switchSession ? "other" : "main"))
         #expect(await MainActor.run { vm.input } == "keep the newer draft")
     }
 

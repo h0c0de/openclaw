@@ -252,7 +252,7 @@ final class QuickChatModel {
     @ObservationIgnored private var sendTask: Task<String, Error>?
     private var permissionTask: Task<Void, Never>?
     @ObservationIgnored private var permissionPollTask: Task<Void, Never>?
-    @ObservationIgnored private var retryIdentity: RetryIdentity?
+    private var retryIdentity: RetryIdentity?
     @ObservationIgnored private var capturePipelineID: UUID?
     private var textContextCaptureID: UUID?
     @ObservationIgnored private var textContextCaptureTask: Task<Void, Never>?
@@ -373,9 +373,20 @@ final class QuickChatModel {
         !self.permissionsDismissedThisSession && !self.missingPermissions.isEmpty
     }
 
+    private var failedSend: RetryIdentity? {
+        guard case .failed = self.sendState,
+              let retryIdentity,
+              retryIdentity.draft == self.text,
+              retryIdentity.route == self.routingTarget,
+              retryIdentity.thinking == self.selectedThinkingLevel
+        else { return nil }
+        return retryIdentity
+    }
+
     var canSend: Bool {
         let hasPendingOverrideState = self.selectedModelSelectionID != nil || self.selectedThinkingLevel != nil
-        return (!self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || self.textContext != nil) &&
+        return (!self.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            self.textContext != nil || self.failedSend != nil) &&
             !self.sessionKey.isEmpty &&
             self.connectionGate == .available &&
             !self.isCapturingTextContext &&
@@ -527,7 +538,8 @@ final class QuickChatModel {
     }
 
     func send() async -> Bool {
-        await self.performSend(messageOverride: nil, attachments: [])
+        let retry = self.failedSend
+        return await self.performSend(messageOverride: retry?.message, attachments: retry?.attachments ?? [])
     }
 
     func captureFocusedAppText() {
@@ -811,6 +823,7 @@ final class QuickChatModel {
         let previousTarget = self.routingTarget
         self.setRoutingTarget(target)
         if previousTarget != target {
+            self.retryIdentity = nil
             self.invalidateModelChoices()
             // Explicit overrides survive target changes, but the target's underlying
             // session state must be read again before the compact control claims a value.
