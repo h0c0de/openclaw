@@ -19,6 +19,7 @@ import { createRpcSourceForTest } from "../test-helpers.rpc-source.js";
 import {
   registerAgentAbortRunExecutionTest,
   registerAgentAbortStaleKeyExecutionTest,
+  registerAgentElapsedQueueDeadlineTest,
 } from "./agent.abort-execution.test-support.js";
 import { registerAgentAbortSubagentTests } from "./agent.abort-subagents.test-utils.js";
 import { registerAgentPreDispatchFailureTests } from "./agent.pre-dispatch-failure.test-utils.js";
@@ -1698,58 +1699,7 @@ describe("gateway agent handler chat.abort integration", () => {
     }
   });
 
-  it("keeps an elapsed queue deadline terminal before the maintenance sweep", async () => {
-    prime();
-    const runId = "idem-agent-expired-queue-deadline";
-    let nowMs = 1_000_000;
-    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
-    const agentResult = createDeferred<HeldAgentResult>();
-    let settlement: Promise<void> | undefined;
-    let onExecutionStarted: (() => void | Promise<void>) | undefined;
-    mocks.agentCommand.mockImplementation(
-      (opts: { onExecutionStarted?: () => void | Promise<void> }) => {
-        onExecutionStarted = opts.onExecutionStarted;
-        return agentResult.promise;
-      },
-    );
-    const context = makeContext();
-
-    try {
-      await invokeAgent(
-        {
-          message: "do not revive an expired queue deadline",
-          agentId: "main",
-          sessionKey: "agent:main:main",
-          idempotencyKey: runId,
-          timeout: 120,
-        },
-        { context, respond: vi.fn(), reqId: runId },
-      );
-
-      const abortEntry = requireValue(rpcSourceTesting.get(runId), "chat abort entry missing");
-      settlement = captureAgentRunSettlement(runId);
-      const startedAtMs = sourceQueuedAt(abortEntry);
-      const queueExpiresAtMs = sourceExpiry(abortEntry);
-      nowMs = queueExpiresAtMs + 1;
-      const executionStarted = requireValue(onExecutionStarted, "execution-start callback missing");
-      await executionStarted();
-
-      expect(sourceQueuedAt(abortEntry)).toBe(startedAtMs);
-      expect(sourceExpiry(abortEntry)).toBe(queueExpiresAtMs);
-      expect(abortEntry.input.abortSignal.aborted).toBe(true);
-      expect(abortEntry.adapter.abortStopReason).toBe("timeout");
-
-      nowMs = queueExpiresAtMs - 1;
-      await executionStarted();
-      expect(sourceExpiry(abortEntry)).toBe(queueExpiresAtMs);
-    } finally {
-      const remaining = captureAgentRunSettlement(runId);
-      agentResult.resolve({ payloads: [], meta: { durationMs: 1 } });
-      await settlement;
-      await remaining;
-      dateNow.mockRestore();
-    }
-  });
+  registerAgentElapsedQueueDeadlineTest(captureAgentRunSettlement);
 
   it("sets the maintenance expiry to the configured agent timeout, not the 24h chat default", async () => {
     prime();

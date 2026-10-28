@@ -108,3 +108,64 @@ export function registerAgentAbortStaleKeyExecutionTest() {
   it("chat.abort by runId allows the owner connection to use a stale session key", ({ signal }) =>
     checkCancellation({ action: "chat.abort", staleKey: true }, signal));
 }
+
+export function registerAgentElapsedQueueDeadlineTest(
+  captureAgentRunSettlement: (runId: string) => Promise<void>,
+) {
+  it("keeps an elapsed queue deadline terminal before the maintenance sweep", async () => {
+    prime();
+    const runId = "idem-agent-expired-queue-deadline";
+    let nowMs = 1_000_000;
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+    const monotonic = vi.spyOn(performance, "now").mockReturnValue(0);
+    const agentResult = createDeferred<{ payloads: []; meta: { durationMs: number } }>();
+    let settlement: Promise<void> | undefined;
+    let onExecutionStarted: (() => void | Promise<void>) | undefined;
+    mocks.agentCommand.mockImplementation(
+      (opts: { onExecutionStarted?: () => void | Promise<void> }) => {
+        onExecutionStarted = opts.onExecutionStarted;
+        return agentResult.promise;
+      },
+    );
+    const context = makeContext();
+
+    try {
+      await invokeAgent(
+        {
+          message: "do not revive an expired queue deadline",
+          agentId: "main",
+          sessionKey: "agent:main:main",
+          idempotencyKey: runId,
+          timeout: 120,
+        },
+        { context, respond: vi.fn(), reqId: runId },
+      );
+
+      const abortEntry = requireValue(getRpcSource(runId), "chat abort entry missing");
+      settlement = captureAgentRunSettlement(runId);
+      const timing = requireValue(abortEntry.adapter.timing, "source timing missing");
+      const startedAtMs = timing.queuedAtMs;
+      const queueExpiresAtMs = timing.expiresAtMs;
+      nowMs = queueExpiresAtMs + 1;
+      monotonic.mockReturnValue(120_001);
+      const executionStarted = requireValue(onExecutionStarted, "execution-start callback missing");
+      await executionStarted();
+
+      expect(timing.queuedAtMs).toBe(startedAtMs);
+      expect(timing.expiresAtMs).toBe(queueExpiresAtMs);
+      expect(abortEntry.input.abortSignal.aborted).toBe(true);
+      expect(abortEntry.adapter.abortStopReason).toBe("timeout");
+
+      nowMs = queueExpiresAtMs - 1;
+      await executionStarted();
+      expect(timing.expiresAtMs).toBe(queueExpiresAtMs);
+    } finally {
+      const remaining = captureAgentRunSettlement(runId);
+      agentResult.resolve({ payloads: [], meta: { durationMs: 1 } });
+      await settlement;
+      await remaining;
+      dateNow.mockRestore();
+      monotonic.mockRestore();
+    }
+  });
+}
