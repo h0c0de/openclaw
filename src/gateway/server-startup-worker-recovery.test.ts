@@ -14,10 +14,11 @@ import { startClaimedGateway } from "./test-helpers.listener.js";
 await import("./server-start.js");
 
 it.for([
-  ["starts after a competing connection releases its recovery lock", "release"],
-  ["fails clearly when the recovery lock outlasts the retry budget", "exhaust"],
-  ["fails immediately for a non-lock recovery error", "fatal"],
-] as const)("%s", { timeout: 90_000 }, async ([_name, mode], { signal }) => {
+  ["recoverWorkerSessionToolOperationsAfterRestart", "release"],
+  ["recoverWorkerSessionToolOperationsAfterRestart", "exhaust"],
+  ["recoverWorkerSessionToolOperationsAfterRestart", "fatal"],
+  ["pruneOrphanedWorkspaceReconciliations", "release"],
+] as const)("%s: %s", { timeout: 90_000 }, async ([operation, mode], { signal }) => {
   await using state = await createStartupTestState(`worker-recovery-${mode}`, {
     OPENCLAW_TEST_MINIMAL_GATEWAY: "0",
   });
@@ -48,13 +49,8 @@ it.for([
     .spyOn(workers, "loadGatewayWorkerEnvironmentStartupState")
     .mockImplementation(async () => {
       const startup = await load();
-      const recover = startup.placementStore.recoverWorkerSessionToolOperationsAfterRestart.bind(
-        startup.placementStore,
-      );
-      vi.spyOn(
-        startup.placementStore,
-        "recoverWorkerSessionToolOperationsAfterRestart",
-      ).mockImplementation(async () => {
+      const recover = startup.placementStore[operation].bind(startup.placementStore);
+      vi.spyOn(startup.placementStore, operation).mockImplementation(async () => {
         attempts += 1;
         if (mode === "fatal") {
           throw failure;
@@ -74,7 +70,10 @@ it.for([
     });
   const { startGatewayServer } = await import("./server.js");
   const starting = startClaimedGateway(claim, () =>
-    startGatewayServer(claim.port, gatewayStartupOptions("worker-recovery-test-token")),
+    startGatewayServer(claim.port, {
+      ...gatewayStartupOptions("worker-recovery-test-token"),
+      sidecarStartup: "start",
+    }),
   ).then((value) => (server = value));
   void starting.catch(() => {});
   try {
