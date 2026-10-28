@@ -15,6 +15,7 @@ import {
 } from "../../infra/update-run-timeouts.js";
 import { resetLogger, setLoggerOverride } from "../../logging/logger.js";
 import { defaultRuntime } from "../../runtime.js";
+import { getAsyncWorkSignal } from "../../shared/async-work-scope.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { closeOpenClawStateDatabaseForTest } from "../../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
@@ -250,7 +251,9 @@ it("records the accepted CLI stop cause after admitted plugin work settles", asy
       resources.adopt({ release: released });
       try {
         await resources.run(() =>
-          lifecycle.run("plugins", async ({ signal }) => {
+          lifecycle.run("plugins", async () => {
+            const signal = getAsyncWorkSignal()!;
+            expect(signal).toBeDefined();
             entered.resolve(signal);
             await settle.promise;
             signal.throwIfAborted();
